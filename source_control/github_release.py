@@ -16,6 +16,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible. If not, see <http://www.gnu.org/licenses/>.
 
+import tempfile
+
 
 DOCUMENTATION = '''
 ---
@@ -41,21 +43,44 @@ options:
         required: true
         description:
             - Action to perform
-        choices: [ 'latest_release' ]
-
+        choices: [ 'latest_release', 'get_asset_url' ]
+    release_version:
+        required: False
+        description:
+            - You can specify and lock down a version of the release you want to target (used in combination with get_asset_url action)
+    asset_regex:
+        required: False
+        description:
+            - github opensource projects typically build multi assets per release, this regex will help target a specfic asset in that release
 author:
     - "Adrian Moisey (@adrianmoisey)"
+    - "Sriram Venkatesh (@srizzling)"
 requirements:
     - "github3.py >= 1.0.0a3"
 '''
 
 EXAMPLES = '''
 - name: Get latest release of test/test
-  github:
+  github_release:
     token: tokenabc1234567890
     user: testuser
     repo: testrepo
     action: latest_release
+
+- name: Get the latest release/asset url for coreos/rkt
+  github_release:
+    token: tokenabc1234567890
+    user: coreos
+    repo: rkt
+    action: get_asset_url
+    register: rkt_latest_release
+
+- name: Download the latest coreos/rkt release
+  unarchive:
+    src: {{ rkt_latest_release.asset_url }}
+    dest: /opt/rkt
+    remote_src: yes
+
 '''
 
 RETURN = '''
@@ -73,6 +98,12 @@ try:
 except ImportError:
     HAS_GITHUB_API = False
 
+def is_regex_match_asset( regex, str ):
+    m = re.search(regex, str)
+    if m:
+        return True
+    else:
+        return False
 
 def main():
     module = AnsibleModule(
@@ -80,18 +111,23 @@ def main():
             repo=dict(required=True),
             user=dict(required=True),
             token=dict(required=True, no_log=True),
-            action=dict(required=True, choices=['latest_release']),
+            action=dict(required=True, choices=['latest_release', 'get_asset_url']),
+            asset_regex=dict(required=False),
+            release_version=dict(required=False)
         ),
         supports_check_mode=True
     )
 
     if not HAS_GITHUB_API:
-        module.fail_json(msg='Missing requried github3 module (check docs or install with: pip install github3)')
+        module.fail_json(msg='Missing requried github3 module (check docs or install with: pip install github3.py)')
 
     repo = module.params['repo']
     user = module.params['user']
     login_token = module.params['token']
     action = module.params['action']
+    asset_regex = module.params['asset_regex']
+    #release_version = module.params['release_version']
+    release_version = module.params['release_version']
 
     # login to github
     try:
@@ -101,19 +137,43 @@ def main():
     except github3.AuthenticationFailed:
         e = get_exception()
         module.fail_json(msg='Failed to connect to Github: %s' % e)
-
+    
     repository = gh.repository(str(user), str(repo))
 
     if not repository:
         module.fail_json(msg="Repository %s/%s doesn't exist" % (user, repo))
-
+    
+    
     if action == 'latest_release':
         release = repository.latest_release()
         if release:
             module.exit_json(tag=release.tag_name)
         else:
             module.exit_json(tag=None)
+    elif action == 'get_asset_url':
+        # ensure regex and dest is set here
+        if asset_regex is None:
+            module.fail_json(msg="get_asset_url action requires a asset_regex")
+        elif release_version is None:
+            # Default of release_version is latest
+            release_version = "latest"
+        release = repository.latest_release()
+        #print vars(repository)
 
+        if release_version != "latest":
+            #print vars(repository)
+            for r in repository.releases():
+                if r.tag_name == release_version:
+                    release = r
+        if release:
+            assets_list = [a for a in release.assets() if is_regex_match_asset(asset_regex, a.name)]
+            if len(assets_list) > 1:
+                module.fail_json(msg="Regex found too many assets [%s] assoicated with %s release, use a stricter regex" % (', '.join(assests_list), release.tag_name))
+            elif (len(assets_list) == 0):
+                module.fail_json(tag=release.tag_name, msg="Regex found 0 matches for the following release %s" % (release.tag_name) )    
+            module.exit_json(changed=False, tag=release.tag_name, asset_url=assets_list[0].browser_download_url)
+        else:
+            module.exit_json(tag=None)
 
 from ansible.module_utils.basic import *
 
