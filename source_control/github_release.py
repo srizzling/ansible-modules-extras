@@ -46,10 +46,12 @@ options:
         choices: [ 'latest_release', 'get_asset_url' ]
     release_version:
         required: False
+        version_added: "2.3"
         description:
             - You can specify and lock down a version of the release you want to target (used in combination with get_asset_url action)
     asset_regex:
         required: False
+        version_added: "2.3"
         description:
             - github opensource projects typically build multi assets per release, this regex will help target a specfic asset in that release
 author:
