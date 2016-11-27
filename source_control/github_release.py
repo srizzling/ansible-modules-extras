@@ -16,9 +16,6 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible. If not, see <http://www.gnu.org/licenses/>.
 
-import tempfile
-
-
 DOCUMENTATION = '''
 ---
 module: github_release
@@ -69,17 +66,20 @@ EXAMPLES = '''
     repo: testrepo
     action: latest_release
 
-- name: Get the latest release/asset url for coreos/rkt
+- name: Find out latest download url of rkt from github
   github_release:
-    token: tokenabc1234567890
-    user: coreos
-    repo: rkt
+    token: "{{ github_login_token }}"
+    user: "coreos"
+    repo: "rkt"
     action: get_asset_url
-    register: rkt_latest_release
+    asset_regex: ".tar.gz$"
+    release_version: latest
+  register: rkt_release
+  delegate_to: 127.0.0.1
 
 - name: Download the latest coreos/rkt release
   unarchive:
-    src: {{ rkt_latest_release.asset_url }}
+    src: {{ rkt_release.asset_url }}
     dest: /opt/rkt
     remote_src: yes
 
@@ -91,6 +91,11 @@ latest_release:
     type: string
     returned: success
     sample: 1.1.0
+get_asset_url:
+    description: Asset url matching asset regex
+    type: string
+    returned: success
+    sample: https://github.com/coreos/rkt/releases/download/v1.20.0/rkt-1.20.0-1.x86_64.rpm
 '''
 
 try:
@@ -128,7 +133,6 @@ def main():
     login_token = module.params['token']
     action = module.params['action']
     asset_regex = module.params['asset_regex']
-    #release_version = module.params['release_version']
     release_version = module.params['release_version']
 
     # login to github
@@ -155,15 +159,13 @@ def main():
     elif action == 'get_asset_url':
         # ensure regex and dest is set here
         if asset_regex is None:
-            module.fail_json(msg="get_asset_url action requires a asset_regex")
+            module.fail_json(msg="get_asset_url action requires an asset_regex")
         elif release_version is None:
             # Default of release_version is latest
             release_version = "latest"
         release = repository.latest_release()
-        #print vars(repository)
 
         if release_version != "latest":
-            #print vars(repository)
             for r in repository.releases():
                 if r.tag_name == release_version:
                     release = r
